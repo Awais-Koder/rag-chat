@@ -1,0 +1,45 @@
+# Composer
+vendor
+
+# PHPUnit
+.phpunit.cache
+.phpunit.result.cache
+
+# Coverage
+coverage/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Workbench
+/workbench/vendor
+/workbench/node_modules
+/workbench/storage
+/workbench/bootstrap/cache/*
+!/workbench/bootstrap/cache/.gitignore
+
+# SQLite
+database/database.sqlite
+workbench/database/database.sqlite
+
+# Node
+node_modules
+
+# Misc
+composer.phar
