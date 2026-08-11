@@ -1,0 +1,16 @@
+Acme Robotics Warranty Policy
+
+Every AcmeMover robot ships with a standard two-year limited warranty that covers
+defects in materials and workmanship. The warranty period begins on the date of
+delivery.
+
+Battery packs are covered separately under a one-year warranty. Batteries that drop
+below 70 percent of their rated capacity within the first year will be replaced at
+no cost.
+
+The warranty does not cover damage caused by water immersion, operation outside the
+rated temperature range of 0 to 40 degrees Celsius, or unauthorized modifications.
+
+To file a warranty claim, contact support@acmerobotics.example with your robot's
+serial number and a description of the issue. Claims are typically processed within
+five business days.

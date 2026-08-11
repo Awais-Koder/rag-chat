@@ -1,6 +1,6 @@
 {
     "name": "awais/rag-chat",
-    "description": "Laravel RAG Chat Package",
+    "description": "Plug-and-play local RAG for Laravel with laravel/ai agents",
     "type": "library",
     "license": "MIT",
     "require": {
@@ -8,7 +8,8 @@
         "illuminate/contracts": "^12.0|^13.0",
         "illuminate/support": "^12.0|^13.0",
         "illuminate/database": "^12.0|^13.0",
-        "laravel/ai": "^0.9.1"
+        "laravel/ai": "^0.9.1",
+        "smalot/pdfparser": "^2.12"
     },
     "require-dev": {
         "orchestra/testbench": "^10.0",

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(cd /home/awais-koder/WorkStation/projects/packages/awais/rag-chat *)",
+      "Read(//home/awais-koder/WorkStation/projects/packages/awais/rag-chat/database/migrations/vendor/laravel/ai/**)"
+    ]
+  }
+}
