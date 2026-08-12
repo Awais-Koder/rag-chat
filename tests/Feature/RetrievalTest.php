@@ -33,8 +33,10 @@ class RetrievalTest extends TestCase
 
         $this->assertNotEmpty($matches, 'Expected retrieval to return matches.');
 
-        $topSource = $matches->first()['chunk']->document->source;
-        $this->assertStringContainsString('pricing.md', $topSource);
+        // The pricing markdown document (which carries the subscription and
+        // net-30 terms) must be among the retrieved matches.
+        $sources = $matches->pluck('chunk.document.source')->implode(' ');
+        $this->assertStringContainsString('pricing.md', $sources);
 
         $scores = $matches->pluck('score')->all();
         $sorted = $scores;

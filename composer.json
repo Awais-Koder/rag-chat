@@ -1,5 +1,5 @@
 {
-    "name": "awais/rag-chat",
+    "name": "laravelartist/rag-chat",
     "description": "Plug-and-play local RAG for Laravel with laravel/ai agents",
     "type": "library",
     "license": "MIT",

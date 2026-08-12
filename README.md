@@ -1,4 +1,4 @@
-# awais/rag-chat
+# laravelartist/rag-chat
 
 Plug-and-play local RAG for Laravel, powered by [`laravel/ai`](https://github.com/laravel/ai).
 
@@ -14,7 +14,7 @@ Chat runs through a real Laravel AI SDK agent (`RagAgent` + `SearchKnowledge` to
 ## Install (plug-and-play)
 
 ```bash
-composer require awais/rag-chat
+composer require laravelartist/rag-chat
 php artisan rag-chat:install
 ```
 
@@ -75,7 +75,7 @@ return (new RagAgent)->stream('Summarize pricing');
 
 | Concern | Owner |
 |---------|--------|
-| Document ingest (txt/md/pdf), chunking, local vector store | `awais/rag-chat` |
+| Document ingest (txt/md/pdf), chunking, local vector store | `laravelartist/rag-chat` |
 | Embeddings API calls | `laravel/ai` (`Embeddings`) |
 | Chat agents, tools, streaming, conversations, providers | `laravel/ai` (`RagAgent`) |
 | Provider API keys | Your `.env` / `config/ai.php` |

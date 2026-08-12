@@ -8,16 +8,21 @@ use Illuminate\Http\JsonResponse;
 
 /**
  * Thin HTTP wrapper around the package Laravel AI SDK RagAgent.
+ *
+ * The response is backward compatible: `answer` and `sources` are unchanged,
+ * and a new `citations` array is added alongside them.
  */
 class ChatController
 {
     public function __invoke(ChatRequest $request, RagChat $rag): JsonResponse
     {
         $message = $request->message();
+        $response = $rag->respond($message);
 
         return response()->json([
-            'answer' => $rag->answer($message),
-            'sources' => $rag->sources($message),
+            'answer' => $response->answer,
+            'citations' => $response->citations->toArray(),
+            'sources' => $response->sources,
         ]);
     }
 }

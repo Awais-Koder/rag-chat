@@ -66,4 +66,31 @@ class LoaderManager
             .implode(', ', $this->supportedExtensions()).'.'
         );
     }
+
+    /**
+     * Load a file as page-numbered text when its loader supports pages.
+     *
+     * @return array<int, string>|null keyed by 1-based page number, or null when unsupported
+     */
+    public function loadPages(string $path): ?array
+    {
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+
+        foreach ($this->loaders as $loader) {
+            if (! in_array($extension, array_map('strtolower', $loader->extensions()), true)) {
+                continue;
+            }
+
+            if (method_exists($loader, 'loadPages')) {
+                return $loader->loadPages($path);
+            }
+
+            return null;
+        }
+
+        throw new RuntimeException(
+            "No loader registered for [.{$extension}] files. Supported: "
+            .implode(', ', $this->supportedExtensions()).'.'
+        );
+    }
 }

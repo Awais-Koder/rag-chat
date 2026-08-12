@@ -77,11 +77,60 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Features (Tier 2)
+    |--------------------------------------------------------------------------
+    |
+    | Advanced RAG capabilities. All off by default — enabling any of them
+    | only affects newly ingested documents / new queries, and existing
+    | simple chunks keep working untouched.
+    |
+    */
+
+    'features' => [
+        // Generate multiple search query variations (heuristic, no LLM call)
+        // and merge the results.
+        'multi_query' => (bool) env('RAG_FEATURE_MULTI_QUERY', false),
+        // Store parent chunks that group consecutive children so context
+        // expansion can widen a retrieved child with its parent section.
+        'parent_child' => (bool) env('RAG_FEATURE_PARENT_CHILD', false),
+        // Attach a "Document: …" context prefix to every chunk's metadata.
+        'contextual_chunking' => (bool) env('RAG_FEATURE_CONTEXTUAL_CHUNKING', false),
+    ],
+
     'retrieval' => [
         'top_k' => (int) env('RAG_RETRIEVAL_TOP_K', 5),
         'min_score' => (float) env('RAG_RETRIEVAL_MIN_SCORE', 0.0),
         // Extra embedding searches for intent-only questions (e.g. "contact info?").
         'expand_queries' => (bool) env('RAG_RETRIEVAL_EXPAND_QUERIES', true),
+        // Number of variations generated when features.multi_query is enabled.
+        'multi_query_count' => (int) env('RAG_RETRIEVAL_MULTI_QUERY_COUNT', 3),
+        // Hybrid search: merge a portable exact-keyword pass (LIKE on chunk
+        // content) with the vector results, so names, emails, phones, and
+        // other exact tokens are not lost to embedding blur.
+        'hybrid' => [
+            'enabled' => (bool) env('RAG_RETRIEVAL_HYBRID', true),
+            // Base score given to a keyword hit; rises toward 1.0 as more
+            // query terms match the chunk.
+            'keyword_weight' => (float) env('RAG_RETRIEVAL_KEYWORD_WEIGHT', 0.8),
+        ],
+        // Reranking stage after retrieval. null/'none' disables it, 'lexical'
+        // uses the built-in term-overlap reranker, or set a Reranker
+        // implementation class-string to plug in a custom one.
+        'reranker' => env('RAG_RETRIEVAL_RERANKER'),
+        // Grounding floor: when the best match scores below this, respond
+        // with the not-found message instead of calling the LLM. null = off.
+        'min_evidence_score' => env('RAG_RETRIEVAL_MIN_EVIDENCE') !== null && env('RAG_RETRIEVAL_MIN_EVIDENCE') !== ''
+            ? (float) env('RAG_RETRIEVAL_MIN_EVIDENCE')
+            : null,
+        // Widen retrieval results before building the LLM context:
+        //   disabled | parent_only | neighboring_chunks | parent_and_neighbors
+        'context_expansion' => env('RAG_CONTEXT_EXPANSION', 'disabled'),
+        // Chunks before/after a match pulled in by neighboring_chunks.
+        'neighboring_chunks' => (int) env('RAG_CONTEXT_NEIGHBORS', 1),
+        // Hard cap on chunks sent to the LLM after expansion.
+        'max_context_chunks' => (int) env('RAG_CONTEXT_MAX_CHUNKS', 10),
     ],
 
     /*
@@ -97,6 +146,30 @@ return [
 
     'chat' => [
         'pre_retrieve' => (bool) env('RAG_CHAT_PRE_RETRIEVE', true),
+        // Message used when the knowledge base holds no usable evidence for a
+        // question (entity absent, or best match below min_evidence_score).
+        'not_found' => env(
+            'RAG_CHAT_NOT_FOUND',
+            'I could not find an answer in the knowledge base for that question. Try adding a name, product, or topic.'
+        ),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Citations
+    |--------------------------------------------------------------------------
+    |
+    | Citation-aware answers (RagChat::respond / ChatController). Retrieved
+    | chunks are presented to the LLM with stable [SOURCE_ID: n] identifiers,
+    | the model returns JSON {answer, citations}, and every citation is
+    | validated against the chunks that were actually retrieved. Invalid or
+    | invented citation IDs never reach the API response.
+    |
+    */
+
+    'citations' => [
+        // Master switch for the citation pipeline.
+        'enabled' => (bool) env('RAG_CHAT_CITATIONS', true),
     ],
 
     /*
@@ -113,6 +186,7 @@ return [
     'database' => [
         'documents_table' => 'rag_documents',
         'chunks_table' => 'rag_document_chunks',
+        'crawl_runs_table' => 'rag_crawl_runs',
     ],
 
     /*
@@ -154,6 +228,145 @@ return [
         'extensions' => ['txt', 'md', 'markdown', 'pdf'],
         // Max upload size in kilobytes for the document API endpoint.
         'max_upload_kb' => (int) env('RAG_MAX_UPLOAD_KB', 5120),
+        // Children grouped per parent when features.parent_child is enabled.
+        'parent_window' => (int) env('RAG_PARENT_WINDOW', 4),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Website crawling
+    |--------------------------------------------------------------------------
+    |
+    | SiteCrawler ingests a website (sitemap-first, link-following fallback)
+    | into the RAG store so chatbots can answer from public web pages. Pages
+    | carry source_url + document_type=web metadata for citations.
+    |
+    */
+
+    'crawl' => [
+        // Maximum number of pages ingested per crawl.
+        'max_pages' => (int) env('RAG_CRAWL_MAX_PAGES', 50),
+        // Link-following depth used when no sitemap is available.
+        'max_depth' => (int) env('RAG_CRAWL_MAX_DEPTH', 3),
+        // HTTP timeouts in seconds.
+        'timeout' => (int) env('RAG_CRAWL_TIMEOUT', 15),
+        'connect_timeout' => (int) env('RAG_CRAWL_CONNECT_TIMEOUT', 5),
+        // Largest page (bytes) accepted before a page is skipped.
+        'max_page_bytes' => (int) env('RAG_CRAWL_MAX_PAGE_BYTES', 2000000),
+        // Pages yielding fewer plain-text chars than this are skipped.
+        'min_text_chars' => (int) env('RAG_CRAWL_MIN_TEXT_CHARS', 40),
+        'user_agent' => env('RAG_CRAWL_USER_AGENT', 'RagChatCrawler/1.0 (+https://github.com/Awais-Koder/rag-chat)'),
+        // Block requests to private/loopback/link-local addresses (SSRF guard).
+        // Disabled by default; enable before exposing crawling to untrusted users.
+        'block_private_ips' => (bool) env('RAG_CRAWL_BLOCK_PRIVATE_IPS', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Agentic RAG (Tier 3)
+    |--------------------------------------------------------------------------
+    |
+    | Optional agent mode. OFF by default: respond() runs the classic
+    | pre-retrieve -> context -> LLM pipeline. When enabled, respond() hands
+    | the raw question to the laravel/ai agent loop (AgenticRagAgent), which
+    | decides how many searches/tool calls are actually needed and only then
+    | generates the answer. max_steps maps to the SDK #[MaxSteps] attribute;
+    | hosts can lower/raise it by subclassing AgenticRagAgent. Tools are
+    | READ-ONLY and each must be listed here to be available.
+    |
+    */
+
+    'agent' => [
+        'enabled' => (bool) env('RAG_AGENT_ENABLED', false),
+        // The SDK enforces the step budget through the #[MaxSteps] attribute on
+        // AgenticRagAgent (default 4). This key is used for usage reporting and
+        // as the fallback default; hosts change the actual budget by
+        // subclassing the agent and overriding the attribute.
+        'max_steps' => (int) env('RAG_AGENT_MAX_STEPS', 4),
+        // Seconds allowed for the whole agent turn (passed to prompt()).
+        'timeout' => (int) env('RAG_AGENT_TIMEOUT', 20),
+        // Whitelist of tools attached to the agent. Read-only tools only.
+        'tools' => [
+            'search_documents',
+            'get_document',
+            'get_document_section',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Streaming
+    |--------------------------------------------------------------------------
+    |
+    | RagChat::stream() returns the laravel/ai StreamableAgentResponse, which
+    | Laravel serializes as SSE for the frontend. The SDK yields structured
+    | events (stream.started, text.delta, tool.call, …) over the wire.
+    |
+    */
+
+    'streaming' => [
+        'enabled' => (bool) env('RAG_STREAMING_ENABLED', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Indexing
+    |--------------------------------------------------------------------------
+    |
+    | queue      : run ingestion through IndexDocumentJob (background queue).
+    |              Document rows are created immediately with status 'pending'.
+    | incremental: when re-ingesting the same source, compare chunk content
+    |              hashes and reuse embeddings for unchanged chunks.
+    | duplicates : what happens when identical content is ingested again:
+    |              reject (return existing) | reuse (alias) |
+    |              create_new_version (new versioned document row).
+    |
+    */
+
+    'indexing' => [
+        'queue' => (bool) env('RAG_INDEXING_QUEUE', false),
+        // Re-ingests diff chunk content hashes and reuse embeddings for
+        // unchanged chunks. Opt-in: writing content_hash to every chunk would
+        // otherwise alter Tier 1/2 chunk metadata.
+        'incremental' => (bool) env('RAG_INDEXING_INCREMENTAL', false),
+        'duplicates' => env('RAG_INDEXING_DUPLICATES', 'reject'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Caching
+    |--------------------------------------------------------------------------
+    |
+    | Optional retrieval + answer caching. Cache keys include the project
+    | scope, the query, the relevant config, and a fingerprint of the latest
+    | document/chunk change, so caches invalidate automatically when content
+    | changes. Disabled by default.
+    |
+    */
+
+    'cache' => [
+        'enabled' => (bool) env('RAG_CACHE_ENABLED', false),
+        'ttl' => (int) env('RAG_CACHE_TTL', 3600),
+        'retrieval' => (bool) env('RAG_CACHE_RETRIEVAL', true),
+        'answer' => (bool) env('RAG_CACHE_ANSWER', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Usage tracking
+    |--------------------------------------------------------------------------
+    |
+    | Every respond()/answer() call produces a RagRun (id, query, status,
+    | latency, tokens, tool calls, agent steps) attached to the response
+    | metadata as rag_run_id. persist: write it to the rag_runs table
+    | (requires `php artisan migrate` for the package migration).
+    |
+    */
+
+    'usage_tracking' => [
+        'enabled' => (bool) env('RAG_USAGE_TRACKING', true),
+        'persist' => (bool) env('RAG_USAGE_PERSIST', false),
+        'model' => \Awais\RagChat\Models\RagRun::class,
     ],
 
 ];

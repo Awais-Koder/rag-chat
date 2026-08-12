@@ -2,7 +2,9 @@
 
 namespace Awais\RagChat\Tools;
 
+use Awais\RagChat\Citations\CitationRegistry;
 use Awais\RagChat\Rag\Retriever;
+use Awais\RagChat\Support\ResultAuthorizer;
 use Laravel\Ai\Tools\SimilaritySearch;
 
 /**
@@ -14,20 +16,50 @@ class SearchKnowledge
     /**
      * Build a SimilaritySearch tool that queries the ingested corpus.
      *
+     * Results carry citation-safe metadata (document name, page, section,
+     * source URL) plus a stable source_id when a CitationRegistry is bound,
+     * so an agent can cite tool results using the same identifiers as the
+     * pre-retrieved prompt context.
+     *
      * Pass a custom $description when publishing a host agent that needs different tool guidance.
      */
     public static function make(?string $description = null): SimilaritySearch
     {
         $tool = new SimilaritySearch(using: function (string $query) {
-            return app(Retriever::class)
-                ->retrieve($query)
-                ->map(function (array $match) {
+            $registry = app()->bound(CitationRegistry::class)
+                ? app(CitationRegistry::class)
+                : new CitationRegistry();
+
+            $matches = app(Retriever::class)->retrieve($query);
+
+            // Host authorization hook: drop chunks the current user may not see
+            // before anything reaches the agent.
+            $filter = app()->bound(RagChat::class)
+                ? app(RagChat::class)->authorizationFilter()
+                : null;
+
+            $allowedIds = ResultAuthorizer::allowedIds($matches->pluck('chunk'), $filter);
+
+            $matches = $matches
+                ->filter(fn (array $match) => in_array((int) $match['chunk']->id, $allowedIds, true))
+                ->values();
+
+            return $matches
+                ->map(function (array $match) use ($registry) {
                     $chunk = $match['chunk'];
+                    $sourceId = $registry->register($chunk, (float) $match['score']);
+                    $retrieved = $registry->retrieved($sourceId);
 
                     return [
+                        'source_id' => $sourceId,
                         'document_id' => (int) $chunk->document_id,
                         'title' => $chunk->document?->title,
+                        'document_name' => $retrieved?->documentName(),
                         'source' => $chunk->document?->source,
+                        'document_type' => $retrieved?->documentType(),
+                        'page' => $retrieved?->page(),
+                        'section' => $retrieved?->section(),
+                        'source_url' => $retrieved?->sourceUrl(),
                         'score' => round($match['score'], 4),
                         'content' => $chunk->content,
                     ];

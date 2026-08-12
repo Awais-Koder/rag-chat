@@ -47,6 +47,46 @@ class PdfLoader implements DocumentLoader
     }
 
     /**
+     * Extract the text of every page individually.
+     *
+     * @return array<int, string> keyed by 1-based page number; empty pages are omitted
+     */
+    public function loadPages(string $path): array
+    {
+        if (! is_file($path) || ! is_readable($path)) {
+            throw new RuntimeException("Cannot read document at [{$path}].");
+        }
+
+        try {
+            $pdf = $this->parser->parseFile($path);
+            $pages = [];
+
+            foreach ($pdf->getPages() as $index => $page) {
+                $text = $this->normalize($page->getText());
+
+                if ($text === '') {
+                    continue;
+                }
+
+                $pages[$index + 1] = $text;
+            }
+        } catch (\Throwable $e) {
+            throw new RuntimeException(
+                "Failed to parse PDF at [{$path}]: {$e->getMessage()}",
+                previous: $e,
+            );
+        }
+
+        if ($pages === []) {
+            throw new RuntimeException(
+                "PDF [{$path}] produced no extractable text. Scanned/image-only PDFs are not supported without OCR."
+            );
+        }
+
+        return $pages;
+    }
+
+    /**
      * Normalize line endings and collapse excessive whitespace for embedding.
      */
     protected function normalize(string $text): string

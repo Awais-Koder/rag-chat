@@ -2,8 +2,13 @@
 
 namespace Awais\RagChat;
 
+use Awais\RagChat\Citations\CitationRegistry;
 use Awais\RagChat\Contracts\VectorStore;
+use Awais\RagChat\Crawl\HtmlExtractor;
+use Awais\RagChat\Crawl\SiteCrawler;
+use Awais\RagChat\Crawl\UrlDiscoverer;
 use Awais\RagChat\Rag\Chunker;
+use Awais\RagChat\Rag\ContextBuilder;
 use Awais\RagChat\Rag\Embedder;
 use Awais\RagChat\Rag\Ingestor;
 use Awais\RagChat\Rag\LoaderManager;
@@ -54,15 +59,31 @@ class RagChatServiceProvider extends ServiceProvider
 
         $this->app->bind(PromptBuilder::class, fn () => new PromptBuilder());
 
+        $this->app->bind(ContextBuilder::class, fn () => new ContextBuilder());
+
+        // One citation registry per request so the prompt context and the
+        // SearchKnowledge tool share the same source ID mapping.
+        $this->app->scoped(CitationRegistry::class, fn () => new CitationRegistry());
+
         $this->app->singleton(RagChat::class, function ($app) {
             return new RagChat(
                 $app->make(Ingestor::class),
                 $app->make(Retriever::class),
                 $app->make(PromptBuilder::class),
+                $app->make(CitationRegistry::class),
+                $app->make(ContextBuilder::class),
             );
         });
 
         $this->app->alias(RagChat::class, 'rag-chat');
+
+        // Website crawler: sitemap-first discovery + HTML text extraction,
+        // ingesting pages through the same Ingestor pipeline as file uploads.
+        $this->app->singleton(SiteCrawler::class, fn ($app) => new SiteCrawler(
+            new UrlDiscoverer(),
+            new HtmlExtractor(),
+            $app->make(Ingestor::class),
+        ));
     }
 
     public function boot(): void

@@ -2,6 +2,7 @@
 
 namespace Awais\RagChat\Tests\Feature;
 
+use Awais\RagChat\Agents\CitedRagAgent;
 use Awais\RagChat\Agents\RagAgent;
 use Awais\RagChat\RagChat;
 use Awais\RagChat\Tests\Support\FakeEmbeddings;
@@ -51,7 +52,7 @@ class ChatTest extends TestCase
 
     public function test_chat_endpoint_returns_answer_and_sources(): void
     {
-        RagAgent::fake([
+        CitedRagAgent::fake([
             'The AcmeMover X1 is priced at 45,000 US dollars per unit.',
         ]);
 
@@ -78,9 +79,12 @@ class ChatTest extends TestCase
 
     public function test_answer_helper_returns_plain_text_only(): void
     {
-        RagAgent::fake(['Plain answer text only.']);
+        // respond() drives the citation-aware agent, so that is the class to fake.
+        // The question must not read as a proper-noun entity (e.g. "Anything")
+        // or the grounding gate short-circuits before the LLM runs.
+        CitedRagAgent::fake(['Plain answer text only.']);
 
-        $text = $this->app->make(RagChat::class)->answer('Anything?');
+        $text = $this->app->make(RagChat::class)->answer('hello there');
 
         $this->assertSame('Plain answer text only.', $text);
     }
