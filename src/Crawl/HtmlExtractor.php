@@ -6,6 +6,7 @@ use DOMDocument;
 use DOMElement;
 use DOMNode;
 use DOMText;
+use DOMXPath;
 
 /**
  * Strips markup from a crawled page and returns a plain-text excerpt plus the
@@ -43,6 +44,11 @@ class HtmlExtractor
     public function extract(string $html): array
     {
         $document = $this->load($html);
+
+        // Sites behind Cloudflare serve emails obfuscated as "[email protected]"
+        // with the real address XOR-encoded in data-cfemail. Decode them so the
+        // knowledge base (and citations) contain the actual address.
+        $this->deobfuscateEmails($document);
 
         $titleNode = $document->getElementsByTagName('title')->item(0);
         $title = $titleNode !== null ? trim((string) $titleNode->textContent) : null;
@@ -123,6 +129,56 @@ class HtmlExtractor
         }
 
         return $text;
+    }
+
+    /**
+     * Restore Cloudflare-obfuscated email addresses.
+     *
+     * Cloudflare replaces email addresses in served HTML with the literal text
+     * "[email protected]" and stores the real address hex-encoded in a
+     * data-cfemail attribute, XORed against its first byte. When that attribute
+     * is present, the visible placeholder is swapped for the decoded address so
+     * crawls capture the actual contact email.
+     */
+    protected function deobfuscateEmails(DOMDocument $document): void
+    {
+        $xpath = new DOMXPath($document);
+
+        foreach ($xpath->query('//*[@data-cfemail]') as $node) {
+            if (! $node instanceof DOMElement) {
+                continue;
+            }
+
+            $email = $this->decodeCloudflareEmail((string) $node->getAttribute('data-cfemail'));
+
+            if ($email === '') {
+                continue;
+            }
+
+            $node->textContent = $email;
+            $node->removeAttribute('data-cfemail');
+        }
+    }
+
+    /**
+     * Decode Cloudflare's XOR-encoded data-cfemail value.
+     */
+    protected function decodeCloudflareEmail(string $encoded): string
+    {
+        $bytes = array_map('hexdec', str_split($encoded, 2));
+
+        if (count($bytes) < 2) {
+            return '';
+        }
+
+        $key = array_shift($bytes);
+        $decoded = '';
+
+        foreach ($bytes as $byte) {
+            $decoded .= chr($byte ^ $key);
+        }
+
+        return $decoded;
     }
 
     /**
