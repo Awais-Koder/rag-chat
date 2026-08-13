@@ -6,7 +6,6 @@ use Awais\RagChat\Models\RagChunk;
 use Awais\RagChat\Models\RagDocument;
 use Awais\RagChat\Support\RagProjectScope;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Tools\Request;

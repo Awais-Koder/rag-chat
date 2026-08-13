@@ -24,8 +24,7 @@ class SiteCrawler
         protected UrlDiscoverer $discoverer,
         protected HtmlExtractor $extractor,
         protected Ingestor $ingestor,
-    ) {
-    }
+    ) {}
 
     /**
      * Crawl a site and ingest every discovered page.

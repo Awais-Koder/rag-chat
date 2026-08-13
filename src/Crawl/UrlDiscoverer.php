@@ -229,7 +229,7 @@ class UrlDiscoverer
      */
     protected function extractLinks(string $html, string $baseUrl): array
     {
-        $document = new DOMDocument();
+        $document = new DOMDocument;
 
         libxml_use_internal_errors(true);
         $document->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_NOERROR | LIBXML_NOWARNING);
@@ -352,7 +352,7 @@ class UrlDiscoverer
 
     protected function loadXml(string $xml): ?DOMDocument
     {
-        $document = new DOMDocument();
+        $document = new DOMDocument;
 
         libxml_use_internal_errors(true);
 

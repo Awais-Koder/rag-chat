@@ -24,8 +24,7 @@ final class CitationCollection implements Arrayable, Countable, IteratorAggregat
      */
     public function __construct(
         protected array $citations = [],
-    ) {
-    }
+    ) {}
 
     public function count(): int
     {

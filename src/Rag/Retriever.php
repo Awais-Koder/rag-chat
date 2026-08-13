@@ -24,22 +24,30 @@ class Retriever
      * Retrieve the top-K most relevant chunks for a query.
      *
      * Pipeline: (optional) multi-query generation -> vector search per query
-     * -> optional hybrid exact-keyword merge -> optional reranking stage.
+     * -> optional hybrid exact-keyword merge -> metadata filters -> optional
+     * reranking stage.
      *
-     * @return Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>
+     * Filters match chunk meta values, e.g. ['department' => 'engineering'].
+     * Applied after retrieval in PHP so they work identically on every store
+     * (json and mysql drivers both hydrate chunk meta).
+     *
+     * @param  array<string, mixed>  $filters
+     * @return Collection<int, array{chunk: RagChunk, score: float}>
      */
-    public function retrieve(string $query): Collection
+    public function retrieve(string $query, array $filters = []): Collection
     {
-        return $this->search($query)->retrieved;
+        return $this->search($query, $filters)->retrieved;
     }
 
     /**
      * Same retrieval pass as retrieve(), but with full debug tracing:
      * generated queries, per-query hits, and final matches with attribution.
+     *
+     * @param  array<string, mixed>  $filters
      */
-    public function trace(string $query): RetrievalTrace
+    public function trace(string $query, array $filters = []): RetrievalTrace
     {
-        return $this->search($query);
+        return $this->search($query, $filters);
     }
 
     /**
@@ -47,7 +55,7 @@ class Retriever
      * config, and a fingerprint of the latest document/chunk change — so any
      * content change automatically invalidates the cached results.
      */
-    public function cacheKey(string $query): string
+    public function cacheKey(string $query, array $filters = []): string
     {
         return 'rag-chat:retrieval:'.md5(implode('|', [
             (string) RagProjectScope::get(),
@@ -59,6 +67,7 @@ class Retriever
                 'expand_queries' => config('rag-chat.retrieval.expand_queries'),
                 'hybrid' => config('rag-chat.retrieval.hybrid.enabled'),
                 'reranker' => config('rag-chat.retrieval.reranker'),
+                'filters' => $filters,
             ]),
             $this->fingerprint(),
         ]));
@@ -82,25 +91,27 @@ class Retriever
     }
 
     /**
-     * @return array{0: Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>, 1: RetrievalTrace}
+     * @param  array<string, mixed>  $filters
+     * @return array{0: Collection<int, array{chunk: RagChunk, score: float}>, 1: RetrievalTrace}
      */
-    protected function search(string $query): RetrievalTrace
+    protected function search(string $query, array $filters = []): RetrievalTrace
     {
         if ((bool) config('rag-chat.cache.enabled', false) && (bool) config('rag-chat.cache.retrieval', true)) {
             return Cache::remember(
-                $this->cacheKey($query),
+                $this->cacheKey($query, $filters),
                 (int) config('rag-chat.cache.ttl', 3600),
-                fn () => $this->searchUncached($query),
+                fn () => $this->searchUncached($query, $filters),
             );
         }
 
-        return $this->searchUncached($query);
+        return $this->searchUncached($query, $filters);
     }
 
     /**
-     * @return array{0: Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>, 1: RetrievalTrace}
+     * @param  array<string, mixed>  $filters
+     * @return array{0: Collection<int, array{chunk: RagChunk, score: float}>, 1: RetrievalTrace}
      */
-    protected function searchUncached(string $query): RetrievalTrace
+    protected function searchUncached(string $query, array $filters = []): RetrievalTrace
     {
         $topK = (int) config('rag-chat.retrieval.top_k', 5);
         $minScore = (float) config('rag-chat.retrieval.min_score', 0.0);
@@ -112,7 +123,7 @@ class Retriever
                 ? QueryExpander::queries($query)
                 : [$query]);
 
-        /** @var array<int, array{match: array{chunk: \Awais\RagChat\Models\RagChunk, score: float}, query: string}> $bestByChunkId */
+        /** @var array<int, array{match: array{chunk: RagChunk, score: float}, query: string}> $bestByChunkId */
         $bestByChunkId = [];
         $perQuery = [];
 
@@ -141,12 +152,36 @@ class Retriever
             }
         }
 
+        // Metadata filters consult chunk AND document meta (ingest-time meta
+        // lives on the document); preload documents in one query when any
+        // filter is present so filtering stays N+1-free.
+        if ($filters !== []) {
+            $documents = RagDocument::query()
+                ->whereIn('id', collect($bestByChunkId)
+                    ->map(fn (array $entry) => (int) $entry['match']['chunk']->document_id)
+                    ->unique()
+                    ->all())
+                ->get()
+                ->keyBy('id');
+
+            foreach ($bestByChunkId as &$entry) {
+                $entry['match']['chunk']->setRelation('document', $documents[(int) $entry['match']['chunk']->document_id] ?? null);
+            }
+            unset($entry);
+        }
+
         $ordered = collect($bestByChunkId)
+            // Metadata filters apply BEFORE the top-K cut so a filtered-out
+            // document cannot consume the whole candidate budget.
+            ->filter(fn (array $entry) => $this->passesFilters($entry['match']['chunk'], $filters))
             ->sortByDesc(fn (array $entry) => $entry['match']['score'])
             ->take($topK)
             ->values();
 
-        $matches = $this->rerank($query, $ordered->map(fn (array $entry) => $entry['match'])->values());
+        $matches = $this->rerank(
+            $query,
+            $ordered->map(fn (array $entry) => $entry['match'])->values(),
+        );
 
         $queryFor = collect($bestByChunkId)->map(fn (array $entry) => $entry['query']);
 
@@ -167,8 +202,8 @@ class Retriever
     }
 
     /**
-     * @param  array<int, array{match: array{chunk: \Awais\RagChat\Models\RagChunk, score: float}, query: string}>  $bestByChunkId
-     * @param  array{chunk: \Awais\RagChat\Models\RagChunk, score: float}  $match
+     * @param  array<int, array{match: array{chunk: RagChunk, score: float}, query: string}>  $bestByChunkId
+     * @param  array{chunk: RagChunk, score: float}  $match
      */
     protected function rememberBest(array &$bestByChunkId, array $match, string $query): void
     {
@@ -180,7 +215,7 @@ class Retriever
     }
 
     /**
-     * @return Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>
+     * @return Collection<int, array{chunk: RagChunk, score: float}>
      */
     protected function searchOnce(string $query, int $topK, float $minScore): Collection
     {
@@ -194,7 +229,7 @@ class Retriever
      * project. Store-agnostic: runs directly against the chunks table so it
      * behaves identically on the JSON and MySQL drivers.
      *
-     * @return Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>
+     * @return Collection<int, array{chunk: RagChunk, score: float}>
      */
     protected function keywordSearch(string $query, int $topK): Collection
     {
@@ -251,7 +286,7 @@ class Retriever
     }
 
     /**
-     * @return Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>
+     * @return Collection<int, array{chunk: RagChunk, score: float}>
      */
     protected function rerank(string $query, Collection $matches): Collection
     {
@@ -281,5 +316,29 @@ class Retriever
     protected function rerankConfigured(): bool
     {
         return ! in_array(config('rag-chat.retrieval.reranker'), [null, 'none', false], true);
+    }
+
+    /**
+     * Every filter key must match the chunk's meta — falling back to the
+     * document's meta, where ingest-time metadata lives. Supports dot
+     * notation (e.g. 'department.id') and is null-safe: a missing key fails
+     * the filter.
+     *
+     * @param  array<string, mixed>  $filters
+     */
+    protected function passesFilters(RagChunk $chunk, array $filters): bool
+    {
+        $chunkMeta = is_array($chunk->meta) ? $chunk->meta : [];
+        $documentMeta = is_array($chunk->document?->meta) ? $chunk->document->meta : [];
+
+        foreach ($filters as $key => $expected) {
+            $actual = data_get($chunkMeta, $key) ?? data_get($documentMeta, $key);
+
+            if ($actual !== $expected) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

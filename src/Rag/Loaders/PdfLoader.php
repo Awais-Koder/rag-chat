@@ -11,7 +11,7 @@ class PdfLoader implements DocumentLoader
     public function __construct(
         protected ?Parser $parser = null,
     ) {
-        $this->parser ??= new Parser();
+        $this->parser ??= new Parser;
     }
 
     public function extensions(): array

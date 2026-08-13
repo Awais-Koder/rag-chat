@@ -411,7 +411,7 @@ class Ingestor
      * Find an existing document with identical content, honoring the
      * configured duplicate behavior.
      *
-     * @return array{0: RagDocument|null, 1: array<string, mixed>|null}  [existing, versionMeta]
+     * @return array{0: RagDocument|null, 1: array<string, mixed>|null} [existing, versionMeta]
      */
     protected function resolveDuplicate(string $checksum, ?int $projectId): array
     {

@@ -2,10 +2,12 @@
 
 namespace Awais\RagChat\Agents;
 
+use Awais\RagChat\RagChat;
 use Awais\RagChat\Tools\GetDocumentSectionTool;
 use Awais\RagChat\Tools\GetDocumentTool;
 use Awais\RagChat\Tools\SearchKnowledge;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\JsonSchema\Types\Type;
 use Laravel\Ai\Attributes\MaxSteps;
 use Laravel\Ai\Concerns\RemembersConversations;
 use Laravel\Ai\Contracts\Agent;
@@ -32,10 +34,10 @@ use Stringable;
  * Only tools listed in config('rag-chat.agent.tools') are attached — READ-ONLY
  * tools by design; there is no write/side-effect tool in the package.
  *
- * @see \Awais\RagChat\RagChat::respond() — opt in via config('rag-chat.agent.enabled')
+ * @see RagChat::respond() — opt in via config('rag-chat.agent.enabled')
  */
 #[MaxSteps(4)]
-class AgenticRagAgent implements Agent, Conversational, HasTools, HasStructuredOutput
+class AgenticRagAgent implements Agent, Conversational, HasStructuredOutput, HasTools
 {
     use Promptable;
     use RemembersConversations;
@@ -99,7 +101,7 @@ INSTRUCTIONS;
     /**
      * Get the structured output schema the agent must conform to.
      *
-     * @return array<string, \Illuminate\JsonSchema\Types\Type>
+     * @return array<string, Type>
      */
     public function schema(JsonSchema $schema): array
     {

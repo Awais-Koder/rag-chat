@@ -18,8 +18,7 @@ class IndexDocumentJob implements ShouldQueue
 
     public function __construct(
         public int $documentId,
-    ) {
-    }
+    ) {}
 
     public function handle(Ingestor $ingestor): void
     {

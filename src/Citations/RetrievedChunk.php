@@ -18,8 +18,7 @@ final class RetrievedChunk
         public readonly int $sourceId,
         public readonly RagChunk $chunk,
         public readonly float $score,
-    ) {
-    }
+    ) {}
 
     public function document(): ?RagDocument
     {

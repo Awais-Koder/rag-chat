@@ -28,7 +28,7 @@ class SearchKnowledge
         $tool = new SimilaritySearch(using: function (string $query) {
             $registry = app()->bound(CitationRegistry::class)
                 ? app(CitationRegistry::class)
-                : new CitationRegistry();
+                : new CitationRegistry;
 
             $matches = app(Retriever::class)->retrieve($query);
 

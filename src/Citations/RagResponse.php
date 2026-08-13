@@ -20,8 +20,7 @@ final class RagResponse implements Arrayable, Jsonable, JsonSerializable
         public readonly CitationCollection $citations,
         public readonly array $sources = [],
         public readonly array $metadata = [],
-    ) {
-    }
+    ) {}
 
     public function hasCitations(): bool
     {

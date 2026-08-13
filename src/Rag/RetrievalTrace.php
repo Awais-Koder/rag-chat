@@ -27,8 +27,7 @@ class RetrievalTrace implements Arrayable
         public readonly array $matches,
         public readonly bool $reranked,
         public readonly Collection $retrieved,
-    ) {
-    }
+    ) {}
 
     /**
      * @return array{

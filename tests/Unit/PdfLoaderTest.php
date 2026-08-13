@@ -10,7 +10,7 @@ class PdfLoaderTest extends TestCase
 {
     public function test_it_extracts_text_from_a_pdf(): void
     {
-        $loader = new PdfLoader();
+        $loader = new PdfLoader;
         $path = __DIR__.'/../fixtures/acme/pricing.pdf';
 
         $this->assertSame(['pdf'], $loader->extensions());
@@ -26,6 +26,6 @@ class PdfLoaderTest extends TestCase
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Cannot read document');
 
-        (new PdfLoader())->load(__DIR__.'/../fixtures/acme/does-not-exist.pdf');
+        (new PdfLoader)->load(__DIR__.'/../fixtures/acme/does-not-exist.pdf');
     }
 }

@@ -10,8 +10,7 @@ class Embedder
         protected ?string $provider = null,
         protected ?string $model = null,
         protected ?int $dimensions = null,
-    ) {
-    }
+    ) {}
 
     public static function fromConfig(): self
     {

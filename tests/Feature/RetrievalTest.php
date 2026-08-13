@@ -4,8 +4,8 @@ namespace Awais\RagChat\Tests\Feature;
 
 use Awais\RagChat\RagChat;
 use Awais\RagChat\Tests\Support\FakeEmbeddings;
-use Awais\RagChat\Tools\SearchKnowledge;
 use Awais\RagChat\Tests\TestCase;
+use Awais\RagChat\Tools\SearchKnowledge;
 use Laravel\Ai\Embeddings;
 use Laravel\Ai\Tools\Request;
 use Laravel\Ai\Tools\SimilaritySearch;

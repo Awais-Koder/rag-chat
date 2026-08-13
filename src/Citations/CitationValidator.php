@@ -19,7 +19,7 @@ class CitationValidator
     public function validate(mixed $rawCitations, array $retrieved): CitationCollection
     {
         if (! is_array($rawCitations)) {
-            return new CitationCollection();
+            return new CitationCollection;
         }
 
         $seen = [];

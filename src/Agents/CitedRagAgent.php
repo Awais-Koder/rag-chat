@@ -2,7 +2,9 @@
 
 namespace Awais\RagChat\Agents;
 
+use Awais\RagChat\Tools\SearchKnowledge;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\JsonSchema\Types\Type;
 use Laravel\Ai\Concerns\RemembersConversations;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\Conversational;
@@ -24,7 +26,7 @@ use Stringable;
  * present in the provided context. Anything else is rejected later by the
  * CitationValidator, so fabricated sources can never reach the API.
  */
-class CitedRagAgent implements Agent, Conversational, HasTools, HasStructuredOutput
+class CitedRagAgent implements Agent, Conversational, HasStructuredOutput, HasTools
 {
     use Promptable;
     use RemembersConversations;
@@ -69,14 +71,14 @@ INSTRUCTIONS;
     public function tools(): iterable
     {
         return [
-            \Awais\RagChat\Tools\SearchKnowledge::make(),
+            SearchKnowledge::make(),
         ];
     }
 
     /**
      * Get the structured output schema the agent must conform to.
      *
-     * @return array<string, \Illuminate\JsonSchema\Types\Type>
+     * @return array<string, Type>
      */
     public function schema(JsonSchema $schema): array
     {

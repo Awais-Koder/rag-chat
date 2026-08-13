@@ -2,6 +2,7 @@
 
 namespace Awais\RagChat\Contracts;
 
+use Awais\RagChat\Models\RagChunk;
 use Illuminate\Support\Collection;
 
 /**
@@ -16,7 +17,6 @@ interface VectorStore
     /**
      * Persist embedded chunks for a document.
      *
-     * @param  int  $documentId
      * @param  array<int, array{position: int, content: string, vector: array<float>, dimensions: int, meta: ?array}>  $chunks
      */
     public function insert(int $documentId, array $chunks): void;
@@ -26,7 +26,7 @@ interface VectorStore
      * with its similarity score (higher = more similar), filtered by minScore.
      *
      * @param  array<float>  $queryVector
-     * @return Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>
+     * @return Collection<int, array{chunk: RagChunk, score: float}>
      */
     public function search(array $queryVector, int $topK, float $minScore): Collection;
 }

@@ -2,8 +2,8 @@
 
 namespace Awais\RagChat\Http\Controllers;
 
-use Awais\RagChat\RagChat;
 use Awais\RagChat\Http\Requests\ChatRequest;
+use Awais\RagChat\RagChat;
 use Laravel\Ai\Responses\StreamableAgentResponse;
 
 /**

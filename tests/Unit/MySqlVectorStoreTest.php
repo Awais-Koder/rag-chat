@@ -17,7 +17,7 @@ class MySqlVectorStoreTest extends TestCase
             'checksum' => hash('sha256', 'fixture'),
         ]);
 
-        $store = new MySqlVectorStore();
+        $store = new MySqlVectorStore;
         $store->insert($document->id, [[
             'position' => 0,
             'content' => 'hello world',
@@ -36,7 +36,7 @@ class MySqlVectorStoreTest extends TestCase
 
     public function test_search_query_uses_mysql_distance_helpers(): void
     {
-        $store = new MySqlVectorStore();
+        $store = new MySqlVectorStore;
         $query = $store->newSearchQuery([0.1, 0.2, 0.3], topK: 5, minScore: 0.25);
 
         $sql = $query->toSql();

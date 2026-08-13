@@ -3,10 +3,13 @@
 namespace Awais\RagChat;
 
 use Awais\RagChat\Citations\CitationRegistry;
+use Awais\RagChat\Console\Commands\IngestCommand;
+use Awais\RagChat\Console\Commands\InstallCommand;
 use Awais\RagChat\Contracts\VectorStore;
 use Awais\RagChat\Crawl\HtmlExtractor;
 use Awais\RagChat\Crawl\SiteCrawler;
 use Awais\RagChat\Crawl\UrlDiscoverer;
+use Awais\RagChat\Evaluation\RagEvaluator;
 use Awais\RagChat\Rag\Chunker;
 use Awais\RagChat\Rag\ContextBuilder;
 use Awais\RagChat\Rag\Embedder;
@@ -27,7 +30,7 @@ class RagChatServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigFrom(
-            __DIR__ . '/../config/rag-chat.php',
+            __DIR__.'/../config/rag-chat.php',
             'rag-chat'
         );
 
@@ -40,7 +43,7 @@ class RagChatServiceProvider extends ServiceProvider
             overlap: (int) config('rag-chat.chunk.overlap', 200),
         ));
 
-        $this->app->singleton(LoaderManager::class, fn () => new LoaderManager());
+        $this->app->singleton(LoaderManager::class, fn () => new LoaderManager);
 
         // Vector store driver: portable JSON by default, DB-native opt-in.
         $this->app->singleton(VectorStore::class, fn ($app) => $this->resolveStore($app));
@@ -57,13 +60,17 @@ class RagChatServiceProvider extends ServiceProvider
             $app->make(VectorStore::class),
         ));
 
-        $this->app->bind(PromptBuilder::class, fn () => new PromptBuilder());
+        $this->app->bind(PromptBuilder::class, fn () => new PromptBuilder);
 
-        $this->app->bind(ContextBuilder::class, fn () => new ContextBuilder());
+        $this->app->bind(ContextBuilder::class, fn () => new ContextBuilder);
+
+        $this->app->bind(RagEvaluator::class, fn ($app) => new RagEvaluator(
+            $app->make(Retriever::class),
+        ));
 
         // One citation registry per request so the prompt context and the
         // SearchKnowledge tool share the same source ID mapping.
-        $this->app->scoped(CitationRegistry::class, fn () => new CitationRegistry());
+        $this->app->scoped(CitationRegistry::class, fn () => new CitationRegistry);
 
         $this->app->singleton(RagChat::class, function ($app) {
             return new RagChat(
@@ -80,8 +87,8 @@ class RagChatServiceProvider extends ServiceProvider
         // Website crawler: sitemap-first discovery + HTML text extraction,
         // ingesting pages through the same Ingestor pipeline as file uploads.
         $this->app->singleton(SiteCrawler::class, fn ($app) => new SiteCrawler(
-            new UrlDiscoverer(),
-            new HtmlExtractor(),
+            new UrlDiscoverer,
+            new HtmlExtractor,
             $app->make(Ingestor::class),
         ));
     }
@@ -97,24 +104,24 @@ class RagChatServiceProvider extends ServiceProvider
             $this->loadRoutes();
         }
 
-        $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
 
         $this->publishes([
-            __DIR__ . '/../config/rag-chat.php' => config_path('rag-chat.php'),
+            __DIR__.'/../config/rag-chat.php' => config_path('rag-chat.php'),
         ], 'rag-chat-config');
 
         $this->publishes([
-            __DIR__ . '/../database/migrations' => database_path('migrations'),
+            __DIR__.'/../database/migrations' => database_path('migrations'),
         ], 'rag-chat-migrations');
 
         $this->publishes([
-            __DIR__ . '/../stubs/RagAgent.stub' => app_path('Ai/Agents/RagAgent.php'),
+            __DIR__.'/../stubs/RagAgent.stub' => app_path('Ai/Agents/RagAgent.php'),
         ], 'rag-chat-agent');
 
         if ($this->app->runningInConsole()) {
             $this->commands([
-                \Awais\RagChat\Console\Commands\InstallCommand::class,
-                \Awais\RagChat\Console\Commands\IngestCommand::class,
+                InstallCommand::class,
+                IngestCommand::class,
             ]);
         }
 
@@ -156,7 +163,7 @@ class RagChatServiceProvider extends ServiceProvider
     {
         Route::middleware(config('rag-chat.route.middleware'))
             ->prefix(config('rag-chat.route.prefix'))
-            ->group(__DIR__ . '/../routes/api.php');
+            ->group(__DIR__.'/../routes/api.php');
     }
 
     /**
@@ -169,8 +176,8 @@ class RagChatServiceProvider extends ServiceProvider
         $driver = config('rag-chat.store', 'json');
 
         return match ($driver) {
-            'json' => new JsonVectorStore(),
-            'mysql' => new MySqlVectorStore(),
+            'json' => new JsonVectorStore,
+            'mysql' => new MySqlVectorStore,
             default => throw new InvalidArgumentException(
                 "Unknown rag-chat vector store driver [{$driver}]. Supported: json, mysql."
             ),

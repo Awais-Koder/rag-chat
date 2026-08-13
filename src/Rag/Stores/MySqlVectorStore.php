@@ -43,7 +43,7 @@ class MySqlVectorStore implements VectorStore
      */
     public function newSearchQuery(array $queryVector, int $topK, float $minScore): Builder
     {
-        $table = (new RagChunk())->getTable();
+        $table = (new RagChunk)->getTable();
 
         // COSINE distance is in [0, 2]; similarity = 1 - distance maps it back
         // to the [-1, 1] cosine-similarity convention the rest of the package

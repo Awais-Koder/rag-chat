@@ -17,9 +17,9 @@ class LoaderManager
 
     public function __construct()
     {
-        $this->register(new TextLoader());
-        $this->register(new MarkdownLoader());
-        $this->register(new PdfLoader());
+        $this->register(new TextLoader);
+        $this->register(new MarkdownLoader);
+        $this->register(new PdfLoader);
     }
 
     public function register(DocumentLoader $loader): void

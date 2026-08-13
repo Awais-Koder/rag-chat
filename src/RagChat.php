@@ -16,20 +16,24 @@ use Awais\RagChat\Jobs\IndexDocumentJob;
 use Awais\RagChat\Models\RagChunk;
 use Awais\RagChat\Models\RagDocument;
 use Awais\RagChat\Rag\ContextBuilder;
+use Awais\RagChat\Rag\ContextCompressor;
 use Awais\RagChat\Rag\Ingestor;
 use Awais\RagChat\Rag\PromptBuilder;
+use Awais\RagChat\Rag\QueryRewriter;
 use Awais\RagChat\Rag\Retriever;
+use Awais\RagChat\Support\Groundedness;
 use Awais\RagChat\Support\RagProjectScope;
 use Awais\RagChat\Support\RagRun;
 use Awais\RagChat\Support\ResultAuthorizer;
 use Closure;
-use Laravel\Ai\Attributes\MaxSteps;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
+use Laravel\Ai\Attributes\MaxSteps;
 use Laravel\Ai\Enums\Lab;
 use Laravel\Ai\Responses\AgentResponse;
-use Laravel\Ai\Responses\StructuredAgentResponse;
 use Laravel\Ai\Responses\StreamableAgentResponse;
+use Laravel\Ai\Responses\StructuredAgentResponse;
 
 /**
  * Local RAG enabler for Laravel applications.
@@ -56,8 +60,8 @@ class RagChat
         protected ?CitationRegistry $registry = null,
         protected ?ContextBuilder $contextBuilder = null,
     ) {
-        $this->registry ??= new CitationRegistry();
-        $this->contextBuilder ??= new ContextBuilder();
+        $this->registry ??= new CitationRegistry;
+        $this->contextBuilder ??= new ContextBuilder;
     }
 
     /**
@@ -97,7 +101,8 @@ class RagChat
      * Ask the SDK RagAgent and return only the final answer text.
      *
      * Kept for backward compatibility. Prefer respond() to get validated
-     * citations alongside the answer.
+     * citations alongside the answer. Note: answer() does not expose the Tier 4
+     * history/filters inputs — use respond() for those.
      *
      * @param  Lab|array<int, Lab|string>|string|null  $provider
      */
@@ -123,18 +128,32 @@ class RagChat
      * the response metadata. With config('rag-chat.cache.answer') enabled,
      * non-agentic responses are cached and invalidated on any content change.
      *
+     * Optional Tier 4 inputs:
+     *  - $history : conversation turns {role: user|assistant, content} used to
+     *    rewrite pronoun-led questions into standalone queries before retrieval.
+     *  - $filters : chunk meta filters applied at retrieval, e.g.
+     *    ['document_type' => 'resume'].
+     *
      * @param  Lab|array<int, Lab|string>|string|null  $provider
+     * @param  list<array{role: string, content: string}>|null  $history
+     * @param  array<string, mixed>  $filters
      */
     public function respond(
         string $question,
         Lab|array|string|null $provider = null,
         ?string $model = null,
+        ?array $history = null,
+        array $filters = [],
     ): RagResponse {
         if ((bool) config('rag-chat.agent.enabled', false)) {
-            return $this->respondAgentically($question, $provider, $model);
+            return $this->respondAgentically($question, $provider, $model, $history, $filters);
         }
 
-        if ($this->answerCacheEnabled() && ($cached = $this->cachedResponse($question)) !== null) {
+        $originalQuestion = $question;
+        $question = $this->rewriteForConversation($question, $history ?? []);
+        $rewritten = $question !== $originalQuestion;
+
+        if ($this->answerCacheEnabled() && ($cached = $this->cachedResponse($question, $filters)) !== null) {
             $run = (new RagRun($question))->complete();
             $run->status = 'cached';
             $this->lastRun = $run;
@@ -152,7 +171,7 @@ class RagChat
         $run = new RagRun($question);
 
         try {
-            $response = $this->respondStandard($question, $provider, $model);
+            $response = $this->respondStandard($question, $provider, $model, $filters);
             $run->complete(
                 usage: $this->lastUsage,
                 retrievals: $this->lastRetrievals,
@@ -166,11 +185,16 @@ class RagChat
         $this->lastRun = $run;
         $this->persistRun($run);
 
-        $final = $this->withRunMetadata($response, $run, agent: false);
+        $final = $this->withRunMetadata(
+            $response,
+            $run,
+            agent: false,
+            extra: $rewritten ? ['original_query' => $originalQuestion] : [],
+        );
 
         if ($this->answerCacheEnabled()) {
             Cache::put(
-                $this->answerCacheKey($question),
+                $this->answerCacheKey($question, $filters),
                 $final->toArray(),
                 (int) config('rag-chat.cache.ttl', 3600),
             );
@@ -186,14 +210,20 @@ class RagChat
      * available directly via (new AgenticRagAgent)->stream(...).
      *
      * @param  Lab|array<int, Lab|string>|string|null  $provider
+     * @param  list<array{role: string, content: string}>|null  $history
+     * @param  array<string, mixed>  $filters
      */
     public function stream(
         string $question,
         Lab|array|string|null $provider = null,
         ?string $model = null,
+        ?array $history = null,
+        array $filters = [],
     ): StreamableAgentResponse {
+        $question = $this->rewriteForConversation($question, $history ?? []);
+
         return (new RagAgent)->stream(
-            $this->promptMessage($question),
+            $this->promptMessage($question, $filters),
             provider: $provider,
             model: $model,
         );
@@ -201,33 +231,38 @@ class RagChat
 
     /**
      * User message sent to the agent (optionally includes pre-retrieved context).
+     *
+     * @param  array<string, mixed>  $filters
      */
-    public function promptMessage(string $question): string
+    public function promptMessage(string $question, array $filters = []): string
     {
         if (! config('rag-chat.chat.pre_retrieve', true)) {
             return $question;
         }
 
-        return $this->context($question);
+        return $this->context($question, $filters);
     }
 
     /**
      * The retrieval matches for a question, without generating an answer.
      *
-     * @return Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>
+     * @param  array<string, mixed>  $filters
+     * @return Collection<int, array{chunk: RagChunk, score: float}>
      */
-    public function retrieve(string $question): Collection
+    public function retrieve(string $question, array $filters = []): Collection
     {
-        return $this->authorizeMatches($this->retriever->retrieve($question));
+        return $this->authorizeMatches($this->retriever->retrieve($question, $filters));
     }
 
     /**
      * Build a ready-to-send context block + question string from retrieved chunks.
+     *
+     * @param  array<string, mixed>  $filters
      */
-    public function context(string $question): string
+    public function context(string $question, array $filters = []): string
     {
         $matches = $this->contextBuilder->expand(
-            $this->authorizeMatches($this->retriever->retrieve($question))
+            $this->authorizeMatches($this->retriever->retrieve($question, $filters))
         );
 
         return $this->promptBuilder->build($question, $matches->all());
@@ -238,16 +273,17 @@ class RagChat
      * final matches) plus the configured context expansion. Internal
      * diagnostics — not part of the chat API.
      *
+     * @param  array<string, mixed>  $filters
      * @return array<string, mixed>
      */
-    public function trace(string $question): array
+    public function trace(string $question, array $filters = []): array
     {
-        $trace = $this->retriever->trace($question)->toArray();
+        $trace = $this->retriever->trace($question, $filters)->toArray();
 
         $trace['context_expansion'] = [
             'strategy' => (string) config('rag-chat.retrieval.context_expansion', 'disabled'),
             'final_chunks' => $this->contextBuilder
-                ->expand($this->retriever->retrieve($question))
+                ->expand($this->retriever->retrieve($question, $filters))
                 ->pluck('chunk.id')
                 ->map(fn ($id) => (int) $id)
                 ->all(),
@@ -259,11 +295,12 @@ class RagChat
     /**
      * Provenance rows for the top retrieval matches (no LLM call).
      *
+     * @param  array<string, mixed>  $filters
      * @return array<int, array{document_id: int, title: ?string, source: ?string, score: float, excerpt: string}>
      */
-    public function sources(string $question): array
+    public function sources(string $question, array $filters = []): array
     {
-        return $this->formatSources($this->authorizeMatches($this->retriever->retrieve($question)));
+        return $this->formatSources($this->authorizeMatches($this->retriever->retrieve($question, $filters)));
     }
 
     /**
@@ -316,6 +353,122 @@ class RagChat
     }
 
     /**
+     * Delete a document and its chunks from the knowledge base (Tier 4 KB API).
+     *
+     * Chunks are deleted explicitly rather than relying on FK cascade so the
+     * behaviour is identical on every driver (including SQLite with FK
+     * enforcement off).
+     */
+    public function deleteDocument(int $documentId): bool
+    {
+        $document = $this->document($documentId);
+
+        if ($document === null) {
+            return false;
+        }
+
+        $this->chunks($documentId)->each->delete();
+
+        return (bool) $document->delete();
+    }
+
+    /**
+     * Re-index a document from its stored source (Tier 4 KB API).
+     *
+     * Requires the original file path to still exist for file documents, or
+     * the stored pending_text for text documents. Returns the new RagDocument,
+     * or the existing document when the duplicate policy (default 'reject')
+     * returns it unchanged, or null when the source is no longer available.
+     *
+     * Note: with the default duplicate policy this is effectively a re-ingest
+     * — identical content is deduplicated. Set indexing.duplicates to
+     * 'create_new_version' to force a new version row on every re-index.
+     */
+    public function reindexDocument(int $documentId): ?RagDocument
+    {
+        $document = $this->document($documentId);
+
+        if ($document === null) {
+            return null;
+        }
+
+        $meta = is_array($document->meta) ? $document->meta : [];
+        $projectId = (int) $document->project_id;
+
+        if (isset($meta['pending_text']) && is_string($meta['pending_text'])) {
+            return $this->ingestor->ingestText(
+                $meta['pending_text'],
+                (string) $document->source,
+                $document->title,
+                ['project_id' => $projectId],
+            );
+        }
+
+        if (isset($meta['pending_path']) && is_file((string) $meta['pending_path'])) {
+            return $this->ingestor->ingestFile(
+                (string) $meta['pending_path'],
+                ['project_id' => $projectId, 'title' => $document->title],
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * Delete every document in the active project scope (Tier 4 KB API).
+     *
+     * Chunks are removed per-document (explicit, driver-independent). Returns
+     * the number of documents removed.
+     */
+    public function clearKnowledgeBase(): int
+    {
+        $documents = RagDocument::query()
+            ->when(RagProjectScope::get() !== null, fn ($query) => $query->where('project_id', RagProjectScope::get()))
+            ->get();
+
+        foreach ($documents as $document) {
+            $this->chunks((int) $document->id)->each->delete();
+            $document->delete();
+        }
+
+        return $documents->count();
+    }
+
+    /**
+     * Inspect the chunks of one document (Tier 4 KB API) — chunk inspection
+     * without touching retrieval or the LLM.
+     *
+     * Scoped like document(): a document outside the active project scope
+     * (or missing) returns an empty collection, so chunk inspection cannot
+     * leak across tenants.
+     *
+     * @return Collection<int, RagChunk>
+     */
+    public function chunks(int $documentId): Collection
+    {
+        if ($this->document($documentId) === null) {
+            return collect();
+        }
+
+        return RagChunk::query()
+            ->where('document_id', $documentId)
+            ->orderBy('position')
+            ->get();
+    }
+
+    /**
+     * Alias of retrieve() kept for symmetry with the KB management API: search
+     * the knowledge base for a question.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return Collection<int, array{chunk: RagChunk, score: float}>
+     */
+    public function search(string $question, array $filters = []): Collection
+    {
+        return $this->retrieve($question, $filters);
+    }
+
+    /**
      * The RagRun metadata of the last chat turn (usage tracking, debug).
      */
     public function lastRun(): ?RagRun
@@ -346,16 +499,19 @@ class RagChat
 
     /**
      * Classic citation-aware pipeline: retrieve -> entity prioritization ->
-     * grounding gates -> context expansion -> cited LLM -> citation validation.
+     * grounding gates -> context expansion -> optional context compression ->
+     * cited LLM -> citation validation -> confidence.
      *
      * @param  Lab|array<int, Lab|string>|string|null  $provider
+     * @param  array<string, mixed>  $filters
      */
     protected function respondStandard(
         string $question,
         Lab|array|string|null $provider = null,
         ?string $model = null,
+        array $filters = [],
     ): RagResponse {
-        $matches = $this->authorizeMatches($this->retriever->retrieve($question));
+        $matches = $this->authorizeMatches($this->retriever->retrieve($question, $filters));
         $this->lastRetrievals = $matches->count();
 
         // Prefer chunks that literally mention the entity being asked about
@@ -389,6 +545,14 @@ class RagChat
         // the retrieved children only.
         $matches = $this->contextBuilder->expand($matches);
 
+        // Tier 4 context compression: relevance floor + character budget.
+        $matches = (new ContextCompressor)->compress($matches);
+
+        // Re-apply the authorization filter after expansion/compression so
+        // parent/neighbor chunks pulled in by those stages cannot reach the
+        // LLM or citations when the host has restricted access.
+        $matches = $this->authorizeMatches($matches);
+
         $this->registry->reset();
 
         foreach ($matches as $match) {
@@ -412,8 +576,9 @@ class RagChat
 
             return new RagResponse(
                 answer: $this->plainAnswer($question, $provider, $model),
-                citations: new CitationCollection(),
+                citations: new CitationCollection,
                 sources: $this->formatSources($matches),
+                metadata: ['confidence' => 'low'],
             );
         }
 
@@ -428,6 +593,7 @@ class RagChat
             answer: $this->fallbackAnswer($answer),
             citations: $citations,
             sources: $this->formatSources($matches),
+            metadata: ['confidence' => Groundedness::evaluate($matches, $citations)],
         );
     }
 
@@ -440,12 +606,18 @@ class RagChat
      * failure it falls back to the classic pipeline so chat never breaks.
      *
      * @param  Lab|array<int, Lab|string>|string|null  $provider
+     * @param  list<array{role: string, content: string}>|null  $history
+     * @param  array<string, mixed>  $filters
      */
     protected function respondAgentically(
         string $question,
         Lab|array|string|null $provider = null,
         ?string $model = null,
+        ?array $history = null,
+        array $filters = [],
     ): RagResponse {
+        $originalQuestion = $question;
+        $question = $this->rewriteForConversation($question, $history ?? []);
         $run = new RagRun($question);
 
         $this->registry->reset();
@@ -472,10 +644,13 @@ class RagChat
                 $this->registry->all(),
             );
 
+            $matches = $this->authorizeMatches($this->retriever->retrieve($question, $filters));
+
             $response = new RagResponse(
                 answer: $this->fallbackAnswer($answer),
                 citations: $citations,
-                sources: $this->formatSources($this->authorizeMatches($this->retriever->retrieve($question))),
+                sources: $this->formatSources($matches),
+                metadata: ['confidence' => Groundedness::evaluate($matches, $citations)],
             );
         } catch (\Throwable $exception) {
             report($exception);
@@ -483,7 +658,7 @@ class RagChat
 
             // Resilience: fall back to the classic pre-retrieve pipeline and
             // record the turn as completed (the error stays on the run).
-            $response = $this->respondStandard($question, $provider, $model);
+            $response = $this->respondStandard($question, $provider, $model, $filters);
             $run->complete(
                 usage: $this->lastUsage,
                 retrievals: $this->lastRetrievals,
@@ -496,7 +671,12 @@ class RagChat
         $this->lastRun = $run;
         $this->persistRun($run);
 
-        return $this->withRunMetadata($response, $run, agent: true);
+        return $this->withRunMetadata(
+            $response,
+            $run,
+            agent: true,
+            extra: $question !== $originalQuestion ? ['original_query' => $originalQuestion] : [],
+        );
     }
 
     /**
@@ -585,7 +765,7 @@ class RagChat
     /**
      * Safe response when the evidence is missing or ambiguous — no LLM call.
      *
-     * @param  Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>  $matches
+     * @param  Collection<int, array{chunk: RagChunk, score: float}>  $matches
      * @param  list<string>  $candidates
      */
     protected function ungroundedResponse(Collection $matches, string $status, array $candidates = []): RagResponse
@@ -598,13 +778,14 @@ class RagChat
 
         return new RagResponse(
             answer: $answer,
-            citations: new CitationCollection(),
+            citations: new CitationCollection,
             sources: $this->formatSources($matches),
+            metadata: ['confidence' => 'unsupported'],
         );
     }
 
     /**
-     * @param  Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>  $matches
+     * @param  Collection<int, array{chunk: RagChunk, score: float}>  $matches
      * @return array<int, array{document_id: int, title: ?string, source: ?string, score: float, excerpt: string}>
      */
     protected function formatSources(Collection $matches): array
@@ -617,7 +798,7 @@ class RagChat
                 'title' => $chunk->document?->title,
                 'source' => $chunk->document?->source,
                 'score' => round($match['score'], 4),
-                'excerpt' => \Illuminate\Support\Str::limit($chunk->content, 200),
+                'excerpt' => Str::limit($chunk->content, 200),
             ];
         })->all();
     }
@@ -633,13 +814,17 @@ class RagChat
             answer: $response->answer,
             citations: $response->citations,
             sources: $response->sources,
-            metadata: array_merge([
-                'rag_run_id' => $run->id,
-                'agent' => $agent,
-                'usage' => $run->usage,
-                'latency_ms' => $run->latencyMs(),
-                'status' => $run->status,
-            ], $extra),
+            metadata: array_merge(
+                $response->metadata, // e.g. confidence from the pipeline stages
+                [
+                    'rag_run_id' => $run->id,
+                    'agent' => $agent,
+                    'usage' => $run->usage,
+                    'latency_ms' => $run->latencyMs(),
+                    'status' => $run->status,
+                ],
+                $extra,
+            ),
         );
     }
 
@@ -659,8 +844,8 @@ class RagChat
     /**
      * Apply the registered authorization filter to retrieval matches.
      *
-     * @param  Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>  $matches
-     * @return Collection<int, array{chunk: \Awais\RagChat\Models\RagChunk, score: float}>
+     * @param  Collection<int, array{chunk: RagChunk, score: float}>  $matches
+     * @return Collection<int, array{chunk: RagChunk, score: float}>
      */
     protected function authorizeMatches(Collection $matches): Collection
     {
@@ -688,7 +873,10 @@ class RagChat
             && (bool) config('rag-chat.cache.answer', true);
     }
 
-    protected function answerCacheKey(string $question): string
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    protected function answerCacheKey(string $question, array $filters = []): string
     {
         return 'rag-chat:answer:'.md5(implode('|', [
             (string) RagProjectScope::get(),
@@ -697,9 +885,22 @@ class RagChat
                 'chat' => config('rag-chat.chat'),
                 'min_evidence' => config('rag-chat.retrieval.min_evidence_score'),
                 'expansion' => config('rag-chat.retrieval.context_expansion'),
+                'compression' => config('rag-chat.compression'),
+                'filters' => $filters,
             ]),
             $this->documentsFingerprint(),
         ]));
+    }
+
+    /**
+     * Apply the Tier 4 conversation-aware rewrite when enabled and history is
+     * provided. Returns the question unchanged otherwise.
+     *
+     * @param  list<array{role: string, content: string}>  $history
+     */
+    protected function rewriteForConversation(string $question, array $history): string
+    {
+        return (new QueryRewriter)->rewrite($question, $history);
     }
 
     /**
@@ -719,9 +920,12 @@ class RagChat
         ]);
     }
 
-    protected function cachedResponse(string $question): ?RagResponse
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    protected function cachedResponse(string $question, array $filters = []): ?RagResponse
     {
-        $cached = Cache::get($this->answerCacheKey($question));
+        $cached = Cache::get($this->answerCacheKey($question, $filters));
 
         if (! is_array($cached)) {
             return null;
@@ -803,7 +1007,7 @@ class RagChat
             return;
         }
 
-        /** @var \Awais\RagChat\Models\RagRun $model */
+        /** @var Models\RagRun $model */
         $model::create([
             'rag_run_id' => $run->id,
             'project_id' => RagProjectScope::get(),

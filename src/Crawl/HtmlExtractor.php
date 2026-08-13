@@ -65,7 +65,7 @@ class HtmlExtractor
      */
     protected function load(string $html): DOMDocument
     {
-        $document = new DOMDocument();
+        $document = new DOMDocument;
 
         // The leading XML declaration forces UTF-8 handling without relying
         // on mbstring being installed.

@@ -24,8 +24,7 @@ final class Citation implements Arrayable, Jsonable, JsonSerializable
         public readonly ?string $section,
         public readonly ?string $sourceUrl,
         public readonly float $score,
-    ) {
-    }
+    ) {}
 
     public static function fromRetrievedChunk(RetrievedChunk $chunk): self
     {

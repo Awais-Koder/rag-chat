@@ -17,8 +17,7 @@ class IndexReport implements Arrayable
         public readonly int $removed = 0,
         public readonly int $unchanged = 0,
         public readonly int $reusedEmbeddings = 0,
-    ) {
-    }
+    ) {}
 
     public function total(): int
     {

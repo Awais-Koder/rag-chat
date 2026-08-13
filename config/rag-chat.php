@@ -1,5 +1,7 @@
 <?php
 
+use Awais\RagChat\Models\RagRun;
+
 return [
 
     /*
@@ -366,7 +368,90 @@ return [
     'usage_tracking' => [
         'enabled' => (bool) env('RAG_USAGE_TRACKING', true),
         'persist' => (bool) env('RAG_USAGE_PERSIST', false),
-        'model' => \Awais\RagChat\Models\RagRun::class,
+        'model' => RagRun::class,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Conversation awareness (Tier 4)
+    |--------------------------------------------------------------------------
+    |
+    | When enabled and history is passed to respond()/stream(), the latest
+    | user question is rewritten into a standalone query so pronouns and
+    | references ("he", "the company") resolve against prior turns before
+    | retrieval. rewrite: heuristic (no LLM call) | llm | disabled.
+    |
+    */
+
+    'conversation' => [
+        'enabled' => (bool) env('RAG_CONVERSATION_ENABLED', false),
+        'rewrite' => env('RAG_CONVERSATION_REWRITE', 'heuristic'),
+        'history_turns' => (int) env('RAG_CONVERSATION_HISTORY_TURNS', 4),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Context compression (Tier 4)
+    |--------------------------------------------------------------------------
+    |
+    | Optional post-retrieval compression before the LLM context is built:
+    | drops chunks below a relevance floor and caps the total context size in
+    | characters. Citation metadata survives — compressed chunks still map to
+    | their original sources.
+    |
+    */
+
+    'compression' => [
+        'enabled' => (bool) env('RAG_COMPRESSION_ENABLED', false),
+        'min_relevance' => (float) env('RAG_COMPRESSION_MIN_RELEVANCE', 0.0),
+        'max_context_chars' => (int) env('RAG_COMPRESSION_MAX_CONTEXT_CHARS', 12000),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Answer confidence (Tier 4)
+    |--------------------------------------------------------------------------
+    |
+    | Confidence is derived from the retrieval evidence after generation:
+    |   high   - strong best-match score with supporting citations
+    |   medium - usable evidence, weaker match or thin citations
+    |   low    - weak evidence
+    |   unsupported - no usable evidence (answer was the not-found fallback)
+    |
+    */
+
+    'confidence' => [
+        'high_score' => (float) env('RAG_CONFIDENCE_HIGH', 0.65),
+        'medium_score' => (float) env('RAG_CONFIDENCE_MEDIUM', 0.45),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Evaluation framework (Tier 4)
+    |--------------------------------------------------------------------------
+    |
+    | Offline evaluation of a knowledge base against a dataset of
+    | {question, expected answer, expected source} cases.
+    |
+    */
+
+    'evaluation' => [
+        'top_k' => (int) env('RAG_EVAL_TOP_K', 5),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Prompt safety (Tier 4)
+    |--------------------------------------------------------------------------
+    |
+    | injection_guard: instructs the model to treat retrieved excerpts as DATA,
+    | never as instructions, so instructions embedded in documents cannot
+    | override the system prompt.
+    |
+    */
+
+    'prompt' => [
+        'injection_guard' => (bool) env('RAG_PROMPT_INJECTION_GUARD', true),
     ],
 
 ];
